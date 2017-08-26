@@ -6,7 +6,7 @@
 #include <Bounce.h> //Used for button de-bouncing
 
 // How many leds are in the strip?
-#define NUM_LEDS 147
+#define NUM_LEDS 148
 
 // Data pin that led data will be written out over
 #define DATA_PIN 9
@@ -101,6 +101,7 @@ int ballCount = 0;
 // of loop()s
 int ballSpeed = START_DELAY;
 
+// Has a new game started? (ball starts in the middle, awaiting paddle hit to start game)
 boolean newGame = true;
 
 // Used to give a visual representation of the power of a hit
@@ -140,11 +141,11 @@ void setup() {
     if(random(10) < 5){dirrection=true;}
     else {dirrection=false;}
 
-    // light up Player paddles, update display
+    // light up Player paddles, update displays
     for(int i=0;i<=2;i++){leds[i] = CRGB::Orange;}
     for(int i=1;i<=3;i++){leds[NUM_LEDS-i] = CRGB::Blue;}
     SB1Message.SetFont(MatriseFontData);
-    SB1Message.Init(&SB1Matrix, SB1Matrix.Width(), SB1Message.FontHeight() + 1, 1, 1);
+    SB1Message.Init(&SB1Matrix, SB1Matrix.Width(), SB1Message.FontHeight() + 1, 2, 1); //(..., X, Y) from bottom left
     SB1Message.SetText((unsigned char *)TxtDemo, sizeof(TxtDemo) - 1);
     SB1Message.SetTextColrOptions(COLR_RGB | COLR_SINGLE, 0xff, 0xdf, 0x00);
     SB2Message.SetFont(MatriseFontData);
@@ -162,27 +163,36 @@ void setup() {
 
 void loop() {
 
+  // Ball blinks green and white in center, waiting for player to hit button to start
   while(newGame){
     leds[NUM_LEDS/2] = CRGB::Green;
     FastLED.show();
     delay(500);
     leds[NUM_LEDS/2] = CRGB::White;
     FastLED.show();
-    delay(500);
-    
+    delay(500);    
   }
 
+  // If button pushed...
   if(paddle1==true){
+    //  Paddle turns white, able to hit ball in this state
     for(int i=0;i<=2;i++){leds[i] = CRGB::White;}
     paddle1Up=true;
+    
+    // If main() has looped PADDLE_RATE times, decrease paddle power by one, reset that counter
     if(paddle1Count >= PADDLE_RATE){
       paddle1Power--;
       paddle1Count=0;
     }
+
+    // Once power is below PADDLE_RECHARGE, no longer able to hit ball.
+    // Paddle glows red, indicating "recharging" state
     if(paddle1Power < PADDLE_RECHARGE){
       for(int i=0;i<=2;i++){leds[i].setRGB(255-(-1*paddle1Power), 0, 0);}
       paddle1Up=false;
     }
+
+    // Once power is zero, reset everything, able to push button again to hit
     if(paddle1Power == 0){
       paddle1Power=255;
       paddle1=false;
@@ -190,6 +200,7 @@ void loop() {
     }
   }
 
+  // See paddle1 logic above. Same thing, but for other player
   if(paddle2==true){
     for(int i=1;i<=3;i++){leds[NUM_LEDS-i] = CRGB::White;}
     paddle2Up=true;
@@ -207,29 +218,44 @@ void loop() {
       for(int i=1;i<=3;i++){leds[NUM_LEDS-i] = CRGB::Blue;}
     }
   }
-  
+
+  // If main() has looped ballSpeed times, update the location of the ball, determine if hit or not
   if(ballCount == ballSpeed){
+    // Current location goes to black
     leds[ballLED] = CRGB::Black;
+
+    // If the ball is moving up the string...
     if(dirrection){
+      // Increment its location by one
       ballLED++;
-      if(ballLED == NUM_LEDS-3 && paddle2Up){ //if ball hit...
+      // Reverse direction if hit
+      if(ballLED == NUM_LEDS-3 && paddle2Up){
         dirrection=false;
+        // Change the color of the ball to indicate return strength
         ballPowerColor=map(paddle2Power, PADDLE_RECHARGE, 255, 0, 255);
+
+        // Ballspeed will decrease (ball will move faster) by 0-20 points depending
+        // on the paddle power when the ball "makes contact." Paddle power can be 
+        // between PADDLE_RECHARGE and 255 for a successful hit. Map the current 
+        // value of paddlexPower to somewhere between 0 and 20. Subtract the result
+        // from the current ballSpeed to get the new ball speed.
         ballSpeed=ballSpeed-map(paddle2Power, PADDLE_RECHARGE, 255, 0, 20);
         if(ballSpeed<=MAX_SPEED){ballSpeed=MAX_SPEED;}
         }
-      if(ballLED >= NUM_LEDS-2){ //if ball not hit...
+        // If the ball wasn't hit, increment score, green bars on scoring player scoreboard
+      if(ballLED >= NUM_LEDS-2){ 
           scored=true;
           p1Score++;
           SB1Matrix.DrawLine(0,0,0,7,CRGB::Green);
           SB1Matrix.DrawLine(7,0,7,7,CRGB::Green);
         } 
     }
+
+    // Similar logic as above, but if ball is going in opposite direction
     if(!dirrection){
       if(ballLED == 3 && paddle1Up){ //if ball hit...
         dirrection = true;
         ballPowerColor=map(paddle1Power, PADDLE_RECHARGE, 255, 0, 255);
-        //ballSpeed=ballSpeed-(paddle1Power/HIT_SPEED_FACTOR);
         ballSpeed=ballSpeed-map(paddle1Power, PADDLE_RECHARGE, 255, 0, 20);
         if(ballSpeed<=MAX_SPEED){ballSpeed=MAX_SPEED;}
         ballLED++;}
@@ -240,36 +266,48 @@ void loop() {
           SB2Matrix.DrawLine(7,0,7,7,CRGB::Green);
         } 
       ballLED--;}
+
+    // If a player scored, go to logic to handle that condition
     if(scored){handleScore();}
     ballCount=0;
   }
+
+  // If main() has looped UPDATE_RATE times, re-draw the ball and all displays
   if(updateCount == UPDATE_RATE){ //update ball position
     //leds[ballLED] = CRGB::Cyan;
     leds[ballLED].setRGB(ballPowerColor, 0, (255-(ballPowerColor)));
     FastLED.show();
     updateCount=0;
   }
-  paddle1Count++;
-  paddle2Count++;
-  updateCount++;
-  ballCount++;
+
+  // Increment counters to track number of time main() has looped
+  paddle1Count++;    // tracks paddle1 power
+  paddle2Count++;    // tracks paddle2 power
+  ballCount++;       // tracks ball hit/scoring/position update conditions 
+  updateCount++;     // tracks LED string and scoreboard update timing
 }
 
+// Handles scoring logic
 void handleScore()
 {
+  // Pick a new random dirrection for the ball to travel
   if(random(10) < 5){dirrection=true;}
-  else {dirrection=false;}    
+  else {dirrection=false;}
+  // Ball returns to middle of the string
   ballLED=NUM_LEDS/2;
-  scored=false;
+  // Fill string with "You Failed!" red.
   fill_solid(leds,NUM_LEDS,CRGB::Red);
   FastLED.show();
   delay(1000);
   fill_solid(leds,NUM_LEDS,CRGB::Black);
+  // Remove green bars from scoring player scoreboard
   SB1Matrix.DrawRectangle(0,0,7,7,CRGB::Black);
   SB2Matrix.DrawRectangle(0,0,7,7,CRGB::Black);
   FastLED.show();
+  // Re-draw paddles after full red displayed
   for(int i=0;i<=2;i++){leds[i] = CRGB::Orange;}
   for(int i=1;i<=3;i++){leds[NUM_LEDS-i] = CRGB::Blue;}
+  // Update scoreboards with current score
   TxtDemo[0]=p1Score+'0';
   SB1Message.SetText((unsigned char *)TxtDemo, sizeof(TxtDemo) - 1);
   SB1Message.UpdateText();
@@ -278,6 +316,7 @@ void handleScore()
   SB2Message.UpdateText();
   FastLED.show();
   delay(100);
+  // If a player won (scored 3), process that win condition
   if(p1Score == 3){
     handleP1Win();
     newGame=true;
@@ -286,10 +325,13 @@ void handleScore()
     handleP2Win();
     newGame=true;
   }
+  // Ball speed resets to default
   ballSpeed=START_DELAY;
+  // Reset scored condition
   scored=false;
 }
 
+// If player wins, blink the scoreboard a few times, then reset scores, ready for new game.
 void handleP1Win()
 {
   for(int i=0;i<5;i++){
@@ -316,6 +358,7 @@ void handleP1Win()
   FastLED.show();
 }
 
+// Similar to P1 win logic, but for player 2 displays
 void handleP2Win()
 {
   for(int i=0;i<5;i++){
